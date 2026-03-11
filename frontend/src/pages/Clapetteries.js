@@ -164,26 +164,25 @@ export default function Clapetteries() {
   // M factors (Peter Verdone)
   const mFactors = { 0.10: 1.0, 0.15: 3.37, 0.20: 8.0, 0.25: 15.6, 0.30: 27.0 };
 
-  const getM = (thickness) => {
+  const getM = useCallback((thickness) => {
+    const mf = { 0.10: 1.0, 0.15: 3.37, 0.20: 8.0, 0.25: 15.6, 0.30: 27.0 };
     const t = parseFloat(thickness);
-    if (mFactors[t]) return mFactors[t];
-    // Interpolation lineaire
-    const keys = Object.keys(mFactors).map(Number).sort((a, b) => a - b);
+    if (mf[t]) return mf[t];
+    const keys = Object.keys(mf).map(Number).sort((a, b) => a - b);
     for (let i = 0; i < keys.length - 1; i++) {
       if (t >= keys[i] && t <= keys[i+1]) {
         const ratio = (t - keys[i]) / (keys[i+1] - keys[i]);
-        return mFactors[keys[i]] + ratio * (mFactors[keys[i+1]] - mFactors[keys[i]]);
+        return mf[keys[i]] + ratio * (mf[keys[i+1]] - mf[keys[i]]);
       }
     }
     return 1.0;
-  };
+  }, []);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const calcStiffness = useCallback((shim) => {
     const m = getM(shim.thickness);
     const dRatio = shim.diameter / pistonDia;
     return m * Math.pow(dRatio, 2) * shim.qty;
-  }, [pistonDia]);
+  }, [pistonDia, getM]);
 
   const totalStiffness = shims.reduce((sum, s) => sum + calcStiffness(s), 0);
   const pistonArea = Math.PI * Math.pow(pistonDia / 2, 2);

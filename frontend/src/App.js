@@ -1,5 +1,5 @@
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { HashRouter, Routes, Route } from "react-router-dom";
 import Layout from "@/components/Layout";
 import Accueil from "@/pages/Accueil";
 import HydrauliqueFourches from "@/pages/HydrauliqueFourches";
@@ -11,7 +11,7 @@ import Calculatrice from "@/pages/Calculatrice";
 
 function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Layout>
         <Routes>
           <Route path="/" element={<Accueil />} />
@@ -23,7 +23,7 @@ function App() {
           <Route path="/calculatrice" element={<Calculatrice />} />
         </Routes>
       </Layout>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
