@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 
 /* =============================================
    Shim stack visualisation (barres horizontales)
@@ -35,15 +35,170 @@ function ShimStackVisual({ shims, pistonDiameter }) {
   );
 }
 
+const SHIM_CURVE_SAMPLE_COUNT = 40;
+const SHIM_CURVE_MAX_VELOCITY = 1.5;
+
+const clampValue = (value, min, max) => Math.min(Math.max(value, min), max);
+
+function getInterpolatedMFactor(thickness) {
+  const mFactors = { 0.10: 1.0, 0.15: 3.37, 0.20: 8.0, 0.25: 15.6, 0.30: 27.0 };
+  const parsedThickness = Number.parseFloat(thickness);
+
+  if (mFactors[parsedThickness]) {
+    return mFactors[parsedThickness];
+  }
+
+  const keys = Object.keys(mFactors).map(Number).sort((a, b) => a - b);
+  for (let i = 0; i < keys.length - 1; i += 1) {
+    if (parsedThickness >= keys[i] && parsedThickness <= keys[i + 1]) {
+      const ratio = (parsedThickness - keys[i]) / (keys[i + 1] - keys[i]);
+      return mFactors[keys[i]] + ratio * (mFactors[keys[i + 1]] - mFactors[keys[i]]);
+    }
+  }
+
+  return 1.0;
+}
+
+function interpolateCurveForce(points, velocityTarget) {
+  if (!points.length) return 0;
+  if (velocityTarget <= points[0].velocity) return points[0].force;
+
+  for (let index = 1; index < points.length; index += 1) {
+    const previousPoint = points[index - 1];
+    const currentPoint = points[index];
+
+    if (velocityTarget <= currentPoint.velocity) {
+      const ratio = (velocityTarget - previousPoint.velocity) / (currentPoint.velocity - previousPoint.velocity || 1);
+      return previousPoint.force + (currentPoint.force - previousPoint.force) * ratio;
+    }
+  }
+
+  return points[points.length - 1].force;
+}
+
+function buildShimCurveData({ shims, pistonDia, numPorts, portDia }) {
+  if (!Array.isArray(shims) || shims.length === 0 || pistonDia <= 0 || numPorts <= 0 || portDia <= 0) {
+    return {
+      points: [],
+      maxVelocity: SHIM_CURVE_MAX_VELOCITY,
+      maxForce: 1,
+      kneeVelocity: 0,
+      digressivityIndex: 0,
+      sampleCount: SHIM_CURVE_SAMPLE_COUNT,
+      markers: {
+        lowSpeed: { velocity: 0.1, force: 0 },
+        highSpeed: { velocity: 1.0, force: 0 },
+      },
+    };
+  }
+
+  const expandedShims = shims.flatMap((shim, sourceIndex) =>
+    Array.from({ length: Math.max(1, Number(shim.qty) || 1) }, (_, qtyIndex) => ({
+      ...shim,
+      sourceIndex,
+      qtyIndex,
+    }))
+  );
+
+  const pistonArea = Math.PI * Math.pow(pistonDia / 2, 2);
+  const portArea = Math.max(numPorts * Math.PI * Math.pow(portDia / 2, 2), 1);
+  const stackLength = Math.max(expandedShims.length, 1);
+  const diameters = expandedShims.map((shim) => Number(shim.diameter) || 0);
+  const thicknesses = expandedShims.map((shim) => Number(shim.thickness) || 0.1);
+
+  let baseResistance = 0;
+  let faceResistance = 0;
+  let backupResistance = 0;
+  let crossoverDepth = 0;
+  let orderBiasAccumulator = 0;
+
+  expandedShims.forEach((shim, index) => {
+    const diameter = Number(shim.diameter) || 0;
+    const normalizedIndex = index / Math.max(stackLength - 1, 1);
+    const diameterRatio = clampValue(diameter / pistonDia, 0.45, 1.7);
+    const faceWeight = 1.95 - normalizedIndex * 1.35;
+    const supportWeight = 0.65 + normalizedIndex * 1.55;
+    const typeBias = shim.type === "crossover" ? 0.32 : shim.type === "face" ? 1.1 : shim.type === "backup" ? 0.97 : 1.0;
+    const shimBase = getInterpolatedMFactor(shim.thickness) * Math.pow(diameterRatio, 2.2) * typeBias;
+
+    baseResistance += shimBase;
+    faceResistance += shimBase * faceWeight;
+    backupResistance += shimBase * supportWeight;
+    orderBiasAccumulator += shimBase * (0.58 - normalizedIndex * 1.16);
+
+    if (shim.type === "crossover") {
+      crossoverDepth += 1 - normalizedIndex * 0.55;
+    }
+  });
+
+  const stackSpread = clampValue((Math.max(...diameters) - Math.min(...diameters)) / Math.max(Math.max(...diameters), 1), 0.03, 0.8);
+  const averageThickness = thicknesses.reduce((sum, thickness) => sum + thickness, 0) / thicknesses.length;
+  const faceBackupRatio = faceResistance / Math.max(backupResistance, 1e-6);
+  const orderBias = clampValue(orderBiasAccumulator / Math.max(baseResistance, 1e-6), -0.6, 0.6);
+  const portRestriction = clampValue((pistonArea / portArea) * 0.09, 0.8, 3.5);
+  const baseScale = baseResistance * pistonArea * portRestriction * 0.065;
+  const kneeVelocity = clampValue(
+    0.24 + faceBackupRatio * 0.18 + stackSpread * 0.34 - crossoverDepth * 0.16 + averageThickness * 2.1 - orderBias * 0.28,
+    0.16,
+    1.1
+  );
+  const digressivityIndex = clampValue(0.3 + stackSpread * 0.68 + orderBias * 0.9 - crossoverDepth * 0.22, 0.1, 1.35);
+  const progressiveBoost = clampValue(
+    0.16 + (backupResistance / Math.max(faceResistance, 1e-6)) * 0.32 + Math.max(-orderBias, 0) * 0.7 + crossoverDepth * 0.06,
+    0.08,
+    0.9
+  );
+  const lowSpeedScale = baseScale * (1 + Math.max(orderBias, 0) * 0.9);
+  const highSpeedScale = baseScale * (0.18 + progressiveBoost * 0.46);
+  const preloadForce = lowSpeedScale * 0.05 * (1 + crossoverDepth * 0.35);
+  const lowSpeedExponent = 0.6 + stackSpread * 0.08 + Math.max(orderBias, 0) * 0.05;
+  const highSpeedExponent = 1.08 + progressiveBoost * 0.22;
+  const reliefExponent = 1.2 + stackSpread * 0.35;
+
+  const points = Array.from({ length: SHIM_CURVE_SAMPLE_COUNT }, (_, index) => {
+    const velocity = (SHIM_CURVE_MAX_VELOCITY / (SHIM_CURVE_SAMPLE_COUNT - 1)) * index;
+
+    if (velocity === 0) {
+      return { velocity, force: 0 };
+    }
+
+    const seatedForce = preloadForce * (1 - Math.exp(-velocity * 8.5));
+    const lowSpeedForce = lowSpeedScale * Math.pow(velocity, lowSpeedExponent);
+    const reliefFactor = 1 / (1 + Math.pow(velocity / kneeVelocity, reliefExponent) * digressivityIndex);
+    const highSpeedForce = highSpeedScale * Math.pow(velocity, highSpeedExponent);
+
+    return {
+      velocity,
+      force: seatedForce + lowSpeedForce + highSpeedForce * reliefFactor,
+    };
+  });
+
+  const currentMaxForce = Math.max(...points.map((point) => point.force), 1);
+  const comparisonScaleForce = Math.max(1800, pistonArea * portRestriction * 3.4);
+
+  return {
+    points,
+    maxVelocity: SHIM_CURVE_MAX_VELOCITY,
+    maxForce: Math.max(comparisonScaleForce, currentMaxForce * 1.08),
+    kneeVelocity,
+    digressivityIndex,
+    sampleCount: SHIM_CURVE_SAMPLE_COUNT,
+    markers: {
+      lowSpeed: { velocity: 0.1, force: interpolateCurveForce(points, 0.1) },
+      highSpeed: { velocity: 1.0, force: interpolateCurveForce(points, 1.0) },
+    },
+  };
+}
+
 /* =============================================
    Force vs Velocity Canvas (shim stack)
    ============================================= */
-function ShimFvVChart({ totalStiffness, pistonArea, width = 600, height = 350 }) {
+function ShimFvVChart({ curveData, width = 600, height = 350 }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !totalStiffness) return;
+    if (!canvas || !curveData?.points?.length) return;
     const ctx = canvas.getContext("2d");
     const dpr = window.devicePixelRatio || 1;
     canvas.width = width * dpr;
@@ -91,40 +246,53 @@ function ShimFvVChart({ totalStiffness, pistonArea, width = 600, height = 350 })
     ctx.fillText("Force (N)", 0, 0);
     ctx.restore();
 
-    // Scale
-    const maxV = 1.5;
-    const cDamping = totalStiffness * 0.15 * (pistonArea || 400);
-    const maxF = cDamping * Math.pow(maxV, 0.55) * 1.2;
+    const { maxVelocity, maxForce, markers, points } = curveData;
 
     // Ticks
     ctx.font = "9px 'JetBrains Mono', monospace";
     ctx.textAlign = "center";
     for (let i = 0; i <= 5; i++) {
-      ctx.fillText((maxV * i / 5).toFixed(1), pad.left + (w/5)*i, pad.top + h + 16);
+      ctx.fillText((maxVelocity * i / 5).toFixed(1), pad.left + (w/5)*i, pad.top + h + 16);
     }
     ctx.textAlign = "right";
     for (let i = 0; i <= 5; i++) {
-      ctx.fillText(Math.round(maxF * (5-i) / 5), pad.left - 6, pad.top + (h/5)*i + 4);
+      ctx.fillText(Math.round(maxForce * (5-i) / 5), pad.left - 6, pad.top + (h/5)*i + 4);
     }
 
-    // Digressive curve (shim stack model)
+    ctx.strokeStyle = "rgba(255,255,255,0.16)";
+    ctx.setLineDash([6, 6]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    points.forEach((point, index) => {
+      const x = pad.left + (point.velocity / maxVelocity) * w;
+      const y = pad.top + h - ((point.force / 1.25) / maxForce) * h;
+      if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+
     ctx.strokeStyle = "#ff1493";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    for (let px = 0; px <= w; px++) {
-      const v = (px / w) * maxV;
-      const f = cDamping * Math.pow(v, 0.55);
-      const x = pad.left + px;
-      const y = pad.top + h - (f / maxF) * h;
-      if (px === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
+    points.forEach((point, index) => {
+      const x = pad.left + (point.velocity / maxVelocity) * w;
+      const y = pad.top + h - (point.force / maxForce) * h;
+      if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
     ctx.stroke();
 
-    // Markers at 0.1 and 1.0 m/s
-    const drawMarker = (v, color) => {
-      const f = cDamping * Math.pow(v, 0.55);
-      const x = pad.left + (v / maxV) * w;
-      const y = pad.top + h - (f / maxF) * h;
+    ctx.fillStyle = "rgba(255,20,147,0.85)";
+    points.forEach((point) => {
+      const x = pad.left + (point.velocity / maxVelocity) * w;
+      const y = pad.top + h - (point.force / maxForce) * h;
+      ctx.beginPath();
+      ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    const drawMarker = (marker, color) => {
+      const x = pad.left + (marker.velocity / maxVelocity) * w;
+      const y = pad.top + h - (marker.force / maxForce) * h;
       ctx.beginPath();
       ctx.arc(x, y, 4, 0, Math.PI * 2);
       ctx.fillStyle = color;
@@ -132,16 +300,16 @@ function ShimFvVChart({ totalStiffness, pistonArea, width = 600, height = 350 })
       ctx.fillStyle = "#e0e0e0";
       ctx.font = "9px 'JetBrains Mono', monospace";
       ctx.textAlign = "left";
-      ctx.fillText(`${Math.round(f)}N @ ${v}m/s`, x + 8, y + 3);
+      ctx.fillText(`${Math.round(marker.force)}N @ ${marker.velocity.toFixed(1)}m/s`, x + 8, y + 3);
     };
-    drawMarker(0.1, "#00cc88");
-    drawMarker(1.0, "#ffaa00");
+    drawMarker(markers.lowSpeed, "#00cc88");
+    drawMarker(markers.highSpeed, "#ffaa00");
 
-  }, [totalStiffness, pistonArea, width, height]);
+  }, [curveData, width, height]);
 
   return (
     <div className="chart-container">
-      <canvas ref={canvasRef} style={{ width: `${width}px`, height: `${height}px` }} data-testid="shim-fvv-chart" />
+      <canvas ref={canvasRef} style={{ width: "100%", maxWidth: `${width}px`, height: `${height}px` }} data-testid="shim-fvv-chart" />
     </div>
   );
 }
@@ -392,21 +560,8 @@ export default function Clapetteries() {
     });
   };
 
-  // M factors (Peter Verdone)
-  const mFactors = { 0.10: 1.0, 0.15: 3.37, 0.20: 8.0, 0.25: 15.6, 0.30: 27.0 };
-
   const getM = useCallback((thickness) => {
-    const mf = { 0.10: 1.0, 0.15: 3.37, 0.20: 8.0, 0.25: 15.6, 0.30: 27.0 };
-    const t = parseFloat(thickness);
-    if (mf[t]) return mf[t];
-    const keys = Object.keys(mf).map(Number).sort((a, b) => a - b);
-    for (let i = 0; i < keys.length - 1; i++) {
-      if (t >= keys[i] && t <= keys[i+1]) {
-        const ratio = (t - keys[i]) / (keys[i+1] - keys[i]);
-        return mf[keys[i]] + ratio * (mf[keys[i+1]] - mf[keys[i]]);
-      }
-    }
-    return 1.0;
+    return getInterpolatedMFactor(thickness);
   }, []);
 
   const calcStiffness = useCallback((shim) => {
@@ -418,6 +573,10 @@ export default function Clapetteries() {
   const totalStiffness = shims.reduce((sum, s) => sum + calcStiffness(s), 0);
   const pistonArea = Math.PI * Math.pow(pistonDia / 2, 2);
   const portArea = numPorts * Math.PI * Math.pow(portDia / 2, 2);
+  const shimCurve = useMemo(
+    () => buildShimCurveData({ shims, pistonDia, numPorts, portDia }),
+    [shims, pistonDia, numPorts, portDia]
+  );
 
   // Classify profile
   const classifyProfile = () => {
@@ -432,8 +591,7 @@ export default function Clapetteries() {
   };
 
   const forceAt = (v) => {
-    const c = totalStiffness * 0.15 * (pistonArea || 400);
-    return c * Math.pow(v, 0.55);
+    return interpolateCurveForce(shimCurve.points, v);
   };
 
   const addShim = () => {
@@ -928,11 +1086,23 @@ export default function Clapetteries() {
         {/* Force vs Velocity chart */}
         <div className="calc-section">
           <h3>Courbe Force vs Velocity estimee</h3>
-          <ShimFvVChart totalStiffness={totalStiffness} pistonArea={pistonArea} />
-          <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "8px" }}>
-            Estimation basee sur un modele simplifie (shim stack digressif, exposant 0.55).
-            Les valeurs absolues sont indicatives — utilisez ce graphique pour comparer des
-            configurations entre elles, pas comme reference absolue.
+          <ShimFvVChart curveData={shimCurve} />
+          <div className="results-grid" style={{ marginTop: "14px" }}>
+            <div className="result-card" data-testid="curve-knee-card">
+              <div className="result-label">Seuil de transition</div>
+              <div className="result-value" style={{ fontSize: "16px" }}>{shimCurve.kneeVelocity.toFixed(2)}<span className="result-unit">m/s</span></div>
+            </div>
+            <div className="result-card" data-testid="curve-digressivity-card">
+              <div className="result-label">Indice de digressivite</div>
+              <div className="result-value" style={{ fontSize: "16px" }}>{shimCurve.digressivityIndex.toFixed(2)}</div>
+            </div>
+            <div className="result-card" data-testid="curve-sample-count-card">
+              <div className="result-label">Points traces</div>
+              <div className="result-value" style={{ fontSize: "16px" }}>{shimCurve.sampleCount}</div>
+            </div>
+          </div>
+          <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "8px" }} data-testid="shim-curve-note">
+            Le trace depend maintenant de la sequence du stack, du taper, des epaisseurs, des quantites et des crossover shims. L'echelle verticale reste suffisamment stable pour comparer les reglages entre eux.
           </p>
         </div>
 
