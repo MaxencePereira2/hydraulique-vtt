@@ -6,12 +6,14 @@ import { useState, useRef, useEffect, useCallback } from "react";
 function ShimStackVisual({ shims, pistonDiameter }) {
   if (!shims || shims.length === 0) return null;
   const maxDia = Math.max(pistonDiameter || 0, ...shims.map(s => s.diameter));
+  const reversed = [...shims].reverse();
   return (
     <div className="shim-visual" data-testid="shim-stack-visual">
-      {/* Clamp washer top */}
+      {/* Clamp washer (haut du stack, le plus loin du piston) */}
       <div className="shim-bar clamp" style={{ width: "20px" }} />
       <div className="shim-label">Clamp</div>
-      {shims.map((s, i) => (
+      {/* Shims du backup (haut) vers le face shim (bas, contre le piston) */}
+      {reversed.map((s, i) => (
         <div key={i} style={{ textAlign: "center" }}>
           <div
             className={`shim-bar ${s.type === "crossover" ? "crossover" : ""}`}
@@ -20,10 +22,13 @@ function ShimStackVisual({ shims, pistonDiameter }) {
           />
           <div className="shim-label">
             {s.diameter}x{s.thickness} {s.qty > 1 ? `x${s.qty}` : ""}
+            <span style={{ color: "var(--borders)", marginLeft: "6px", fontSize: "9px" }}>
+              [{s.type}]
+            </span>
           </div>
         </div>
       ))}
-      {/* Piston */}
+      {/* Piston (bas du stack, les face shims sont plaques dessus) */}
       <div style={{ width: `${(pistonDiameter / maxDia) * 280}px`, height: "10px", background: "#ff1493", borderRadius: "2px", marginTop: "4px" }} />
       <div className="shim-label" style={{ color: "#ff1493" }}>Piston ({pistonDiameter}mm)</div>
     </div>
@@ -160,6 +165,232 @@ export default function Clapetteries() {
   const [newThick, setNewThick] = useState(0.15);
   const [newQty, setNewQty] = useState(1);
   const [newType, setNewType] = useState("mid");
+  const [dragIdx, setDragIdx] = useState(null);
+  const [overIdx, setOverIdx] = useState(null);
+
+  /* ===========================================
+     PRESETS : configurations de base
+     =========================================== */
+  const presets = [
+    {
+      name: "Stock DH compression (Fox GRIP2)",
+      desc: "Stack de compression typique d'une Fox 36/38 GRIP2 de serie. Pyramidal classique, digressif. Bon support pedalage/freinage, confortable sur gros impacts. Point de depart standard pour le DH.",
+      pistonDia: 32, numPorts: 6, portDia: 3,
+      shims: [
+        { diameter: 40, thickness: 0.15, qty: 1, type: "face" },
+        { diameter: 38, thickness: 0.15, qty: 1, type: "face" },
+        { diameter: 35, thickness: 0.10, qty: 1, type: "mid" },
+        { diameter: 30, thickness: 0.15, qty: 2, type: "backup" },
+        { diameter: 25, thickness: 0.20, qty: 1, type: "backup" },
+      ]
+    },
+    {
+      name: "Stock detente DH",
+      desc: "Stack de detente DH standard. Plus souple que la compression — la detente n'est entrainee que par le ressort. Face shims plus fins pour un retour controle sans packing.",
+      pistonDia: 32, numPorts: 6, portDia: 3,
+      shims: [
+        { diameter: 40, thickness: 0.10, qty: 1, type: "face" },
+        { diameter: 36, thickness: 0.10, qty: 1, type: "face" },
+        { diameter: 32, thickness: 0.10, qty: 1, type: "mid" },
+        { diameter: 28, thickness: 0.15, qty: 1, type: "backup" },
+        { diameter: 25, thickness: 0.15, qty: 1, type: "backup" },
+      ]
+    },
+    {
+      name: "Enduro polyvalent compression",
+      desc: "Stack compression enduro equilibre. LSC modere (pas trop de resistance au pedalage), HSC suffisant pour les impacts. Bon compromis montee/descente pour l'enduro race.",
+      pistonDia: 30, numPorts: 6, portDia: 2.5,
+      shims: [
+        { diameter: 38, thickness: 0.15, qty: 1, type: "face" },
+        { diameter: 35, thickness: 0.10, qty: 1, type: "face" },
+        { diameter: 30, thickness: 0.15, qty: 1, type: "mid" },
+        { diameter: 25, thickness: 0.15, qty: 1, type: "backup" },
+        { diameter: 22, thickness: 0.20, qty: 1, type: "backup" },
+      ]
+    },
+    {
+      name: "DH Bike Park (souple)",
+      desc: "Stack souple pour le bike park : pumptrack, tables, enchainements rapides. Peu de LSC pour maximiser la sensibilite. HSC modere. Pour pilotes qui privilegient le confort et le flow.",
+      pistonDia: 32, numPorts: 6, portDia: 3,
+      shims: [
+        { diameter: 38, thickness: 0.10, qty: 1, type: "face" },
+        { diameter: 35, thickness: 0.10, qty: 1, type: "face" },
+        { diameter: 30, thickness: 0.10, qty: 1, type: "mid" },
+        { diameter: 25, thickness: 0.15, qty: 1, type: "backup" },
+      ]
+    },
+    {
+      name: "DH World Cup (raide)",
+      desc: "Stack agressif pour la DH naturelle rapide. Fort LSC pour le support au freinage et en virage. HSC eleve pour encaisser les gros impacts sans bottom-out. Reserve aux pilotes experts > 75 kg.",
+      pistonDia: 32, numPorts: 6, portDia: 3,
+      shims: [
+        { diameter: 42, thickness: 0.20, qty: 1, type: "face" },
+        { diameter: 40, thickness: 0.15, qty: 1, type: "face" },
+        { diameter: 38, thickness: 0.15, qty: 1, type: "mid" },
+        { diameter: 35, thickness: 0.15, qty: 1, type: "mid" },
+        { diameter: 30, thickness: 0.20, qty: 2, type: "backup" },
+        { diameter: 25, thickness: 0.25, qty: 1, type: "backup" },
+      ]
+    },
+    {
+      name: "Lineaire avec crossover",
+      desc: "Stack avec crossover gap central pour decouplage LSC/HSC. Le gap (shim 20x0.10) cree une zone de transition douce entre basse et haute vitesse. Profil quasi-lineaire, previsible. Ideal pour le tuning fin.",
+      pistonDia: 32, numPorts: 6, portDia: 3,
+      shims: [
+        { diameter: 40, thickness: 0.15, qty: 1, type: "face" },
+        { diameter: 36, thickness: 0.15, qty: 1, type: "face" },
+        { diameter: 20, thickness: 0.10, qty: 1, type: "crossover" },
+        { diameter: 32, thickness: 0.15, qty: 1, type: "backup" },
+        { diameter: 28, thickness: 0.20, qty: 1, type: "backup" },
+        { diameter: 25, thickness: 0.20, qty: 1, type: "backup" },
+      ]
+    },
+    {
+      name: "Tres digressif (plush)",
+      desc: "Stack pyramidal prononce : face shims larges et fins, backups petits et raides. Tres confortable sur les petits chocs (haute resistance LSC initiale qui chute vite). Sensation plush. Attention au manque de HSC sur gros impacts.",
+      pistonDia: 32, numPorts: 6, portDia: 3,
+      shims: [
+        { diameter: 44, thickness: 0.10, qty: 1, type: "face" },
+        { diameter: 40, thickness: 0.10, qty: 1, type: "face" },
+        { diameter: 35, thickness: 0.10, qty: 1, type: "mid" },
+        { diameter: 25, thickness: 0.25, qty: 1, type: "backup" },
+      ]
+    },
+    {
+      name: "Progressif (anti bottom-out)",
+      desc: "Stack plat avec peu de taper : faible resistance a basse vitesse, montee rapide en haute vitesse. Le profil progressif protege en fin de course. Combine avec un spring rate adapte, il previent efficacement le bottom-out.",
+      pistonDia: 32, numPorts: 6, portDia: 3,
+      shims: [
+        { diameter: 34, thickness: 0.20, qty: 1, type: "face" },
+        { diameter: 32, thickness: 0.20, qty: 1, type: "mid" },
+        { diameter: 30, thickness: 0.20, qty: 1, type: "mid" },
+        { diameter: 28, thickness: 0.25, qty: 1, type: "backup" },
+        { diameter: 25, thickness: 0.25, qty: 1, type: "backup" },
+      ]
+    },
+    {
+      name: "Pilote leger (< 65 kg) compression",
+      desc: "Stack allege pour pilotes legers. Shims plus fins, moins de backups. Reduit le seuil d'ouverture pour compenser le manque de force. Un pilote leger ne genere pas assez de pression pour ouvrir un stack standard — il faut adapter.",
+      pistonDia: 30, numPorts: 6, portDia: 3,
+      shims: [
+        { diameter: 36, thickness: 0.10, qty: 1, type: "face" },
+        { diameter: 32, thickness: 0.10, qty: 1, type: "face" },
+        { diameter: 28, thickness: 0.10, qty: 1, type: "mid" },
+        { diameter: 25, thickness: 0.15, qty: 1, type: "backup" },
+      ]
+    },
+    {
+      name: "Pilote lourd (> 90 kg) compression",
+      desc: "Stack renforce pour pilotes lourds. Face shims plus epais + backups supplementaires. Un pilote lourd genere plus de pression sur le piston — le stack standard ouvre trop facilement, ce qui donne un HSC insuffisant et du bottom-out.",
+      pistonDia: 34, numPorts: 6, portDia: 3.5,
+      shims: [
+        { diameter: 44, thickness: 0.20, qty: 1, type: "face" },
+        { diameter: 42, thickness: 0.15, qty: 1, type: "face" },
+        { diameter: 38, thickness: 0.15, qty: 1, type: "mid" },
+        { diameter: 35, thickness: 0.15, qty: 1, type: "mid" },
+        { diameter: 30, thickness: 0.20, qty: 2, type: "backup" },
+        { diameter: 28, thickness: 0.25, qty: 1, type: "backup" },
+        { diameter: 25, thickness: 0.25, qty: 1, type: "backup" },
+      ]
+    },
+    {
+      name: "Split stack double crossover",
+      desc: "Architecture split stack avancee avec deux crossover gaps. Trois zones de controle independantes : LSC (face shims), zone de transition (premier crossover), HSC (backups profonds via second crossover). Pour le tuning de precision.",
+      pistonDia: 32, numPorts: 6, portDia: 3,
+      shims: [
+        { diameter: 40, thickness: 0.15, qty: 1, type: "face" },
+        { diameter: 38, thickness: 0.10, qty: 1, type: "face" },
+        { diameter: 20, thickness: 0.10, qty: 1, type: "crossover" },
+        { diameter: 34, thickness: 0.15, qty: 1, type: "mid" },
+        { diameter: 30, thickness: 0.15, qty: 1, type: "mid" },
+        { diameter: 18, thickness: 0.10, qty: 1, type: "crossover" },
+        { diameter: 28, thickness: 0.20, qty: 1, type: "backup" },
+        { diameter: 25, thickness: 0.25, qty: 1, type: "backup" },
+      ]
+    },
+    {
+      name: "Fox 40 GRIP2 compression (stock)",
+      desc: "Stack de compression d'origine de la Fox 40 GRIP2 double couronne. Piston 34mm, 8 ports. Stack pyramidal classique mais plus raide que la 36/38 — concu pour la DH World Cup. Face shims larges et epais pour un LSC eleve et un HSC puissant adapte aux impacts a haute vitesse des pistes chronometrees.",
+      pistonDia: 34, numPorts: 8, portDia: 3,
+      shims: [
+        { diameter: 46, thickness: 0.20, qty: 1, type: "face" },
+        { diameter: 44, thickness: 0.15, qty: 1, type: "face" },
+        { diameter: 40, thickness: 0.15, qty: 1, type: "mid" },
+        { diameter: 38, thickness: 0.15, qty: 1, type: "mid" },
+        { diameter: 34, thickness: 0.15, qty: 1, type: "mid" },
+        { diameter: 30, thickness: 0.20, qty: 2, type: "backup" },
+        { diameter: 28, thickness: 0.25, qty: 1, type: "backup" },
+        { diameter: 25, thickness: 0.25, qty: 1, type: "backup" },
+      ]
+    },
+    {
+      name: "Fox 40 GRIP2 detente (stock)",
+      desc: "Stack de detente d'origine de la Fox 40 GRIP2. Plus souple que le cote compression. Calibre pour un retour rapide sans kick-back — les pilotes DH WC ont besoin que la fourche revienne vite entre les impacts successifs sur les pistes techniques rapides.",
+      pistonDia: 34, numPorts: 8, portDia: 3,
+      shims: [
+        { diameter: 44, thickness: 0.10, qty: 1, type: "face" },
+        { diameter: 40, thickness: 0.10, qty: 1, type: "face" },
+        { diameter: 36, thickness: 0.10, qty: 1, type: "mid" },
+        { diameter: 32, thickness: 0.15, qty: 1, type: "mid" },
+        { diameter: 28, thickness: 0.15, qty: 1, type: "backup" },
+        { diameter: 25, thickness: 0.20, qty: 1, type: "backup" },
+      ]
+    },
+  ];
+
+  const loadPreset = (preset) => {
+    setPistonDia(preset.pistonDia);
+    setNumPorts(preset.numPorts);
+    setPortDia(preset.portDia);
+    setShims(preset.shims.map(s => ({ ...s })));
+  };
+
+  /* ===========================================
+     DRAG & DROP : reordonner les shims
+     =========================================== */
+  const handleDragStart = (idx) => {
+    setDragIdx(idx);
+  };
+
+  const handleDragOver = (e, idx) => {
+    e.preventDefault();
+    setOverIdx(idx);
+  };
+
+  const handleDragLeave = () => {
+    setOverIdx(null);
+  };
+
+  const handleDrop = (dropIdx) => {
+    if (dragIdx === null || dragIdx === dropIdx) {
+      setDragIdx(null);
+      setOverIdx(null);
+      return;
+    }
+    setShims(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(dragIdx, 1);
+      next.splice(dropIdx, 0, moved);
+      return next;
+    });
+    setDragIdx(null);
+    setOverIdx(null);
+  };
+
+  const handleDragEnd = () => {
+    setDragIdx(null);
+    setOverIdx(null);
+  };
+
+  const moveShim = (idx, dir) => {
+    const target = idx + dir;
+    if (target < 0 || target >= shims.length) return;
+    setShims(prev => {
+      const next = [...prev];
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
+  };
 
   // M factors (Peter Verdone)
   const mFactors = { 0.10: 1.0, 0.15: 3.37, 0.20: 8.0, 0.25: 15.6, 0.30: 27.0 };
@@ -480,7 +711,43 @@ export default function Clapetteries() {
           Estimateur simplifie base sur les formules publiques. Ce n'est PAS un clone de Shim ReStackor.
         </p>
 
-        {/* Inputs */}
+        {/* ---- PRESETS ---- */}
+        <div className="calc-section">
+          <h3>Configurations de base (presets)</h3>
+          <p style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "16px" }}>
+            Cliquez sur un preset pour charger la configuration dans l'editeur. Chaque preset
+            est un point de depart — modifiez ensuite les shims selon vos besoins.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "10px" }} data-testid="presets-grid">
+            {presets.map((p, i) => (
+              <button
+                key={i}
+                onClick={() => loadPreset(p)}
+                data-testid={`preset-${i}`}
+                style={{
+                  background: "var(--code-bg)",
+                  border: "1px solid var(--borders)",
+                  borderRadius: "4px",
+                  padding: "12px 14px",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "border-color 0.15s, background 0.15s",
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--pink)"; e.currentTarget.style.background = "rgba(255,20,147,0.05)"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--borders)"; e.currentTarget.style.background = "var(--code-bg)"; }}
+              >
+                <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--pink)", marginBottom: "6px" }}>{p.name}</div>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", lineHeight: 1.4 }}>{p.desc}</div>
+                <div style={{ fontSize: "10px", color: "var(--borders)", marginTop: "6px" }}>
+                  Piston {p.pistonDia}mm | {p.shims.length} shims | {p.numPorts} ports x {p.portDia}mm
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ---- Inputs piston ---- */}
         <div className="calc-section">
           <h3>Parametres du piston</h3>
           <div className="form-grid">
@@ -499,12 +766,16 @@ export default function Clapetteries() {
           </div>
         </div>
 
-        {/* Shim list */}
+        {/* ---- Shim list (drag & drop) ---- */}
         <div className="calc-section">
           <h3>Sequence de shims</h3>
+          <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px" }}>
+            Glissez-deposez les lignes pour reordonner les shims, ou utilisez les fleches.
+          </p>
           <table className="tech-table" data-testid="shim-stack-table">
             <thead>
               <tr>
+                <th style={{ width: "30px" }}></th>
                 <th>#</th>
                 <th>Diametre (mm)</th>
                 <th>Epaisseur (mm)</th>
@@ -517,12 +788,55 @@ export default function Clapetteries() {
             </thead>
             <tbody>
               {shims.map((s, i) => (
-                <tr key={i}>
+                <tr
+                  key={i}
+                  draggable
+                  onDragStart={() => handleDragStart(i)}
+                  onDragOver={(e) => handleDragOver(e, i)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={() => handleDrop(i)}
+                  onDragEnd={handleDragEnd}
+                  data-testid={`shim-row-${i}`}
+                  style={{
+                    cursor: "grab",
+                    opacity: dragIdx === i ? 0.4 : 1,
+                    background: overIdx === i && dragIdx !== i ? "rgba(255,20,147,0.12)" : "transparent",
+                    borderTop: overIdx === i && dragIdx !== null && dragIdx > i ? "2px solid var(--pink)" : undefined,
+                    borderBottom: overIdx === i && dragIdx !== null && dragIdx < i ? "2px solid var(--pink)" : undefined,
+                    transition: "opacity 0.15s, background 0.1s",
+                  }}
+                >
+                  <td style={{ textAlign: "center", padding: "4px" }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "2px", alignItems: "center" }}>
+                      <button
+                        onClick={() => moveShim(i, -1)}
+                        disabled={i === 0}
+                        data-testid={`shim-up-${i}`}
+                        style={{ background: "none", border: "none", color: i === 0 ? "var(--borders)" : "var(--text-muted)", cursor: i === 0 ? "default" : "pointer", fontSize: "14px", lineHeight: 1, padding: 0 }}
+                        title="Monter"
+                      >&#9650;</button>
+                      <button
+                        onClick={() => moveShim(i, 1)}
+                        disabled={i === shims.length - 1}
+                        data-testid={`shim-down-${i}`}
+                        style={{ background: "none", border: "none", color: i === shims.length - 1 ? "var(--borders)" : "var(--text-muted)", cursor: i === shims.length - 1 ? "default" : "pointer", fontSize: "14px", lineHeight: 1, padding: 0 }}
+                        title="Descendre"
+                      >&#9660;</button>
+                    </div>
+                  </td>
                   <td>{i + 1}</td>
                   <td>{s.diameter}</td>
                   <td>{s.thickness}</td>
                   <td>{s.qty}</td>
-                  <td>{s.type}</td>
+                  <td>
+                    <span style={{
+                      fontSize: "10px",
+                      padding: "1px 6px",
+                      borderRadius: "3px",
+                      background: s.type === "face" ? "rgba(255,20,147,0.15)" : s.type === "crossover" ? "rgba(255,170,0,0.15)" : s.type === "backup" ? "rgba(0,204,136,0.15)" : "rgba(160,160,176,0.1)",
+                      color: s.type === "face" ? "var(--pink)" : s.type === "crossover" ? "var(--warning)" : s.type === "backup" ? "var(--success)" : "var(--text-muted)",
+                    }}>{s.type}</span>
+                  </td>
                   <td>{getM(s.thickness).toFixed(2)}</td>
                   <td>{calcStiffness(s).toFixed(2)}</td>
                   <td>
