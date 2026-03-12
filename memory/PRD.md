@@ -37,10 +37,13 @@ Ressource technique indépendante pour la préparation suspension VTT DH & Endur
 - [x] Troubleshooting: 10 symptoms with expandable cards
 - [x] Clapetteries: Interactive shim stack module
 - [x] All formulas sourced and explained
+- [x] Courbe F/V Clapetteries rendue dependante des reglages du shim stack (ordre, taper, epaisseurs, quantites, crossover)
+- [x] Build statique GitHub Pages regenere et recopier a la racine `/app` apres modifications React
 
 ## Testing Results
 - Frontend: 99% pass rate (iteration 1)
 - All navigation, interactive elements, calculations verified
+- Verification manuelle du bundle statique : `index.html` racine mis a jour, nouveau hash JS genere, et presence confirmee des nouveaux identifiants/strings de la courbe Clapetteries dans `static/js/main.3514aa45.js`
 
 ## Prioritized Backlog
 ### P0
@@ -59,6 +62,6 @@ Ressource technique indépendante pour la préparation suspension VTT DH & Endur
 - Add more brand-specific setup guides
 
 ## Next Tasks
-1. User feedback on content accuracy
-2. Deploy to GitHub Pages (static build)
+1. User verification on GitHub Pages after pushing regenerated static files
+2. Add more SVG diagrams and remaining technical visuals
 3. Add localStorage for persistent rider data
