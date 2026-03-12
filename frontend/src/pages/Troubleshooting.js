@@ -23,7 +23,7 @@ const symptoms = [
   },
   {
     id: "bottom-out",
-    symptom: "Bottom-out (tape en fin de course)",
+    symptom: "Bottom-out (tape en fin de course parce que tu pouvais te mettre court)",
     causes: [
       "HSC trop faible (shim stack compression trop souple)",
       "Pas assez de tokens/spacers (manque de progressivite air)",
@@ -94,7 +94,7 @@ const symptoms = [
   },
   {
     id: "succion",
-    symptom: "Bruit de succion / gurgling",
+    symptom: "Bruit de succion / gurgling / penses pasà ça gros dégueulasse",
     causes: [
       "Air dans le circuit d'huile",
       "Niveau d'huile insuffisant",
@@ -145,7 +145,7 @@ const symptoms = [
   },
   {
     id: "descend-repos",
-    symptom: "Fourche qui descend toute seule au repos",
+    symptom: "Fourche qui descend toute seule au repos, comme ego après le fwewide bleu",
     causes: [
       "Joint de tige use (fuite de la chambre positive)",
       "Cartouche non etanche",
@@ -190,6 +190,32 @@ export default function Troubleshooting() {
         Guide de diagnostic structure : Symptome &rarr; Causes possibles &rarr; Diagnostic &rarr; Solution
       </p>
 
+      <div
+        data-testid="troubleshooting-comic-reminder"
+        style={{
+          margin: "28px 0 24px",
+          padding: "24px 22px",
+          border: "2px solid var(--pink)",
+          background: "linear-gradient(135deg, rgba(255,20,147,0.18), rgba(255,170,0,0.12))",
+          borderRadius: "8px",
+          boxShadow: "0 0 0 1px rgba(255,20,147,0.15) inset",
+        }}
+      >
+        <div
+          data-testid="troubleshooting-comic-reminder-text"
+          style={{
+            fontSize: "clamp(28px, 5vw, 58px)",
+            lineHeight: 1,
+            fontWeight: 700,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            color: "#fff",
+          }}
+        >
+          un burger et une pinthe = + 2 lapins
+        </div>
+      </div>
+
       {/* TOC */}
       <nav className="toc">
         <h2>Symptomes</h2>
@@ -213,7 +239,7 @@ export default function Troubleshooting() {
       {symptoms.map(s => (
         <section key={s.id} id={s.id} className="symptom-card" data-testid={`symptom-${s.id}`}>
           <div className="symptom-header" onClick={() => toggle(s.id)}>
-            <h3>{s.symptom}</h3>
+            <h3 data-testid={`symptom-title-${s.id}`}>{s.symptom}</h3>
             <ChevronDown
               size={18}
               className={`chevron ${openSymptoms[s.id] ? "open" : ""}`}
