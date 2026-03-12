@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Teste le frontend du site statique français « Châtel c'est bien rose », en te concentrant sur la page Calculatrice et l'onglet Shim Stack après ma modification. La courbe Force vs Velocity du module Shim Stack doit maintenant être tracée à partir de 40 points calculés entre 0 et 4 m/s."
+user_problem_statement: "Teste le frontend du site statique français « Châtel c'est bien rose ». Tests précédents sur la page Calculatrice validés. Nouveau test : valider le choix d'échelle (Linéaire/LOG10) pour la courbe de clapetterie sur la page #/clapetteries."
 
 frontend:
   - task: "Page Calculatrice - Navigation et chargement"
@@ -189,18 +189,91 @@ frontend:
           agent: "testing"
           comment: "Onglet Export Excel fonctionne normalement, pas de régression détectée."
 
+  - task: "Page Clapetteries - Navigation et chargement"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/Clapetteries.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Page Clapetteries charge correctement à l'URL #/clapetteries. Tous les éléments sont présents et visibles. Section interactive accessible."
+
+  - task: "Clapetteries - Toggle d'échelle de vitesse (Linéaire/LOG10)"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/Clapetteries.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Le bloc 'Courbe Force vs Velocity estimee' affiche correctement le choix d'échelle avec deux boutons [data-testid='velocity-scale-linear-button'] et [data-testid='velocity-scale-log10-button']. Par défaut, le mode Linéaire est actif (aria-pressed=true). Le toggle fonctionne parfaitement : clic sur LOG10 active LOG10 et désactive Linéaire."
+
+  - task: "Clapetteries - Mise à jour du texte selon l'échelle active"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/Clapetteries.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Le texte [data-testid='shim-curve-note'] reflète correctement l'échelle active. En mode Linéaire, le texte mentionne 'linéaire'. En mode LOG10, le texte mentionne 'LOG10'. La mise à jour est instantanée après le changement d'échelle."
+
+  - task: "Clapetteries - Canvas graphique Force vs Velocity"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/Clapetteries.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Canvas [data-testid='shim-fvv-chart'] présent et visible. Aucune régression détectée. Le canvas se redessine correctement lors du changement d'échelle."
+
+  - task: "Clapetteries - Cartes d'analyse"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/Clapetteries.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Toutes les cartes d'analyse sont visibles et fonctionnelles : [data-testid='force-01'], [data-testid='force-10'], [data-testid='curve-knee-card'], [data-testid='curve-digressivity-card'], [data-testid='curve-sample-count-card']. Affichage correct des valeurs."
+
+  - task: "Clapetteries - Stabilité du toggle après changement de preset"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/Clapetteries.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Le toggle d'échelle continue de fonctionner correctement après le chargement d'un preset. Test effectué avec le preset 'Stock DH compression (Fox GRIP2)'. Aucune régression détectée."
+
 metadata:
   created_by: "testing_agent"
   version: "1.0"
-  test_sequence: 1
+  test_sequence: 2
   run_ui: true
   test_date: "2025-01-XX"
 
 test_plan:
   current_focus:
-    - "Module Shim Stack - Canvas graphique Force vs Velocity"
-    - "Module Shim Stack - Affichage force à 0.1 m/s"
-    - "Module Shim Stack - Ajout de shim"
+    - "Clapetteries - Toggle d'échelle de vitesse (Linéaire/LOG10)"
+    - "Clapetteries - Mise à jour du texte selon l'échelle active"
+    - "Clapetteries - Canvas graphique Force vs Velocity"
+    - "Clapetteries - Stabilité du toggle après changement de preset"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"
@@ -208,3 +281,5 @@ test_plan:
 agent_communication:
     - agent: "testing"
       message: "Tests complets effectués sur la page Calculatrice et le module Shim Stack. Tous les tests sont RÉUSSIS. La modification demandée (courbe tracée sur 40 points entre 0 et 4 m/s) est bien implémentée et fonctionne parfaitement. Aucune régression détectée sur les autres onglets. Aucune erreur console ou réseau. Application prête pour production."
+    - agent: "testing"
+      message: "Nouveau test effectué sur la page Clapetteries (#/clapetteries). Validation complète du nouveau choix d'échelle (Linéaire/LOG10) pour la courbe Force vs Velocity estimée. TOUS LES TESTS RÉUSSIS : (1) Les deux boutons (Linéaire et LOG10) sont présents et correctement identifiés, (2) L'état par défaut est Linéaire (aria-pressed=true), (3) Le toggle fonctionne parfaitement dans les deux sens, (4) Le texte [data-testid='shim-curve-note'] reflète correctement l'échelle active, (5) Le canvas est visible sans régression, (6) Toutes les cartes d'analyse (force-01, force-10, curve-knee-card, curve-digressivity-card, curve-sample-count-card) sont visibles et fonctionnelles, (7) Le toggle reste fonctionnel après changement de preset. Aucune erreur console ou réseau détectée. Fonctionnalité prête pour production."

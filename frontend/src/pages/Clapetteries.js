@@ -37,8 +37,38 @@ function ShimStackVisual({ shims, pistonDiameter }) {
 
 const SHIM_CURVE_SAMPLE_COUNT = 40;
 const SHIM_CURVE_MAX_VELOCITY = 1.5;
+const SHIM_CURVE_LOG_MIN_VELOCITY = 0.01;
 
 const clampValue = (value, min, max) => Math.min(Math.max(value, min), max);
+
+function buildVelocityAxisConfig(points, maxVelocity, velocityScale) {
+  if (velocityScale === "log10") {
+    const positiveVelocities = points.map((point) => point.velocity).filter((velocity) => velocity > 0);
+    const minPositiveVelocity = Math.max(positiveVelocities[0] || SHIM_CURVE_LOG_MIN_VELOCITY, SHIM_CURVE_LOG_MIN_VELOCITY);
+    const denominator = Math.log10(maxVelocity / minPositiveVelocity) || 1;
+    const defaultTicks = [0, 0.05, 0.1, 0.2, 0.5, 1.0, maxVelocity];
+    const ticks = Array.from(new Set(defaultTicks.filter((tick) => tick === 0 || (tick >= minPositiveVelocity * 0.85 && tick <= maxVelocity))));
+
+    return {
+      label: "LOG10",
+      ticks,
+      minPositiveVelocity,
+      mapVelocity: (velocity) => {
+        if (velocity <= 0) return 0;
+        return clampValue(Math.log10(velocity / minPositiveVelocity) / denominator, 0, 1);
+      },
+      formatTick: (tick) => (tick === 0 ? "0" : tick.toFixed(tick < 0.1 ? 2 : 1)),
+    };
+  }
+
+  return {
+    label: "Linéaire",
+    ticks: Array.from({ length: 6 }, (_, index) => Number(((maxVelocity * index) / 5).toFixed(2))),
+    minPositiveVelocity: SHIM_CURVE_LOG_MIN_VELOCITY,
+    mapVelocity: (velocity) => clampValue(velocity / maxVelocity, 0, 1),
+    formatTick: (tick) => tick.toFixed(1),
+  };
+}
 
 function getInterpolatedMFactor(thickness) {
   const mFactors = { 0.10: 1.0, 0.15: 3.37, 0.20: 8.0, 0.25: 15.6, 0.30: 27.0 };
@@ -193,7 +223,7 @@ function buildShimCurveData({ shims, pistonDia, numPorts, portDia }) {
 /* =============================================
    Force vs Velocity Canvas (shim stack)
    ============================================= */
-function ShimFvVChart({ curveData, width = 600, height = 350 }) {
+function ShimFvVChart({ curveData, velocityScale, width = 600, height = 350 }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -212,29 +242,6 @@ function ShimFvVChart({ curveData, width = 600, height = 350 }) {
     ctx.fillStyle = "#12121f";
     ctx.fillRect(0, 0, width, height);
 
-    // Grid
-    ctx.strokeStyle = "#1f1f30";
-    ctx.lineWidth = 0.5;
-    for (let i = 0; i <= 5; i++) {
-      ctx.beginPath();
-      ctx.moveTo(pad.left, pad.top + (h/5)*i);
-      ctx.lineTo(pad.left + w, pad.top + (h/5)*i);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(pad.left + (w/5)*i, pad.top);
-      ctx.lineTo(pad.left + (w/5)*i, pad.top + h);
-      ctx.stroke();
-    }
-
-    // Axes
-    ctx.strokeStyle = "#2a2a3e";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(pad.left, pad.top);
-    ctx.lineTo(pad.left, pad.top + h);
-    ctx.lineTo(pad.left + w, pad.top + h);
-    ctx.stroke();
-
     // Labels
     ctx.fillStyle = "#a0a0b0";
     ctx.font = "11px 'JetBrains Mono', monospace";
@@ -247,24 +254,53 @@ function ShimFvVChart({ curveData, width = 600, height = 350 }) {
     ctx.restore();
 
     const { maxVelocity, maxForce, markers, points } = curveData;
+    const velocityAxis = buildVelocityAxisConfig(points, maxVelocity, velocityScale);
 
     // Ticks
     ctx.font = "9px 'JetBrains Mono', monospace";
     ctx.textAlign = "center";
-    for (let i = 0; i <= 5; i++) {
-      ctx.fillText((maxVelocity * i / 5).toFixed(1), pad.left + (w/5)*i, pad.top + h + 16);
-    }
+    velocityAxis.ticks.forEach((tick) => {
+      const x = pad.left + velocityAxis.mapVelocity(tick) * w;
+      ctx.textAlign = tick === 0 ? "left" : tick === maxVelocity ? "right" : "center";
+      ctx.fillText(velocityAxis.formatTick(tick), x, pad.top + h + 16);
+    });
     ctx.textAlign = "right";
     for (let i = 0; i <= 5; i++) {
       ctx.fillText(Math.round(maxForce * (5-i) / 5), pad.left - 6, pad.top + (h/5)*i + 4);
     }
+
+    // Grid
+    ctx.strokeStyle = "#1f1f30";
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i <= 5; i++) {
+      ctx.beginPath();
+      ctx.moveTo(pad.left, pad.top + (h/5)*i);
+      ctx.lineTo(pad.left + w, pad.top + (h/5)*i);
+      ctx.stroke();
+    }
+    velocityAxis.ticks.forEach((tick) => {
+      const x = pad.left + velocityAxis.mapVelocity(tick) * w;
+      ctx.beginPath();
+      ctx.moveTo(x, pad.top);
+      ctx.lineTo(x, pad.top + h);
+      ctx.stroke();
+    });
+
+    // Axes
+    ctx.strokeStyle = "#2a2a3e";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, pad.top);
+    ctx.lineTo(pad.left, pad.top + h);
+    ctx.lineTo(pad.left + w, pad.top + h);
+    ctx.stroke();
 
     ctx.strokeStyle = "rgba(255,255,255,0.16)";
     ctx.setLineDash([6, 6]);
     ctx.lineWidth = 1;
     ctx.beginPath();
     points.forEach((point, index) => {
-      const x = pad.left + (point.velocity / maxVelocity) * w;
+      const x = pad.left + velocityAxis.mapVelocity(point.velocity) * w;
       const y = pad.top + h - ((point.force / 1.25) / maxForce) * h;
       if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
@@ -275,7 +311,7 @@ function ShimFvVChart({ curveData, width = 600, height = 350 }) {
     ctx.lineWidth = 2;
     ctx.beginPath();
     points.forEach((point, index) => {
-      const x = pad.left + (point.velocity / maxVelocity) * w;
+      const x = pad.left + velocityAxis.mapVelocity(point.velocity) * w;
       const y = pad.top + h - (point.force / maxForce) * h;
       if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
@@ -283,7 +319,7 @@ function ShimFvVChart({ curveData, width = 600, height = 350 }) {
 
     ctx.fillStyle = "rgba(255,20,147,0.85)";
     points.forEach((point) => {
-      const x = pad.left + (point.velocity / maxVelocity) * w;
+      const x = pad.left + velocityAxis.mapVelocity(point.velocity) * w;
       const y = pad.top + h - (point.force / maxForce) * h;
       ctx.beginPath();
       ctx.arc(x, y, 1.5, 0, Math.PI * 2);
@@ -291,7 +327,7 @@ function ShimFvVChart({ curveData, width = 600, height = 350 }) {
     });
 
     const drawMarker = (marker, color) => {
-      const x = pad.left + (marker.velocity / maxVelocity) * w;
+      const x = pad.left + velocityAxis.mapVelocity(marker.velocity) * w;
       const y = pad.top + h - (marker.force / maxForce) * h;
       ctx.beginPath();
       ctx.arc(x, y, 4, 0, Math.PI * 2);
@@ -305,7 +341,7 @@ function ShimFvVChart({ curveData, width = 600, height = 350 }) {
     drawMarker(markers.lowSpeed, "#00cc88");
     drawMarker(markers.highSpeed, "#ffaa00");
 
-  }, [curveData, width, height]);
+  }, [curveData, velocityScale, width, height]);
 
   return (
     <div className="chart-container">
@@ -335,6 +371,7 @@ export default function Clapetteries() {
   const [newType, setNewType] = useState("mid");
   const [dragIdx, setDragIdx] = useState(null);
   const [overIdx, setOverIdx] = useState(null);
+  const [velocityScale, setVelocityScale] = useState("linear");
 
   /* ===========================================
      PRESETS : configurations de base
@@ -1086,7 +1123,45 @@ export default function Clapetteries() {
         {/* Force vs Velocity chart */}
         <div className="calc-section">
           <h3>Courbe Force vs Velocity estimee</h3>
-          <ShimFvVChart curveData={shimCurve} />
+          <div
+            style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center", marginBottom: "14px" }}
+            data-testid="curve-axis-scale-toggle"
+          >
+            <span style={{ fontSize: "12px", color: "var(--text-muted)" }} data-testid="curve-axis-scale-label">
+              Axe horizontal des vitesses
+            </span>
+            <button
+              type="button"
+              className="calc-btn"
+              onClick={() => setVelocityScale("linear")}
+              data-testid="velocity-scale-linear-button"
+              aria-pressed={velocityScale === "linear"}
+              style={{
+                minWidth: "120px",
+                background: velocityScale === "linear" ? "var(--pink)" : "transparent",
+                color: velocityScale === "linear" ? "#fff" : "var(--text)",
+                border: `1px solid ${velocityScale === "linear" ? "var(--pink)" : "var(--borders)"}`,
+              }}
+            >
+              Linéaire
+            </button>
+            <button
+              type="button"
+              className="calc-btn"
+              onClick={() => setVelocityScale("log10")}
+              data-testid="velocity-scale-log10-button"
+              aria-pressed={velocityScale === "log10"}
+              style={{
+                minWidth: "120px",
+                background: velocityScale === "log10" ? "var(--pink)" : "transparent",
+                color: velocityScale === "log10" ? "#fff" : "var(--text)",
+                border: `1px solid ${velocityScale === "log10" ? "var(--pink)" : "var(--borders)"}`,
+              }}
+            >
+              LOG10
+            </button>
+          </div>
+          <ShimFvVChart curveData={shimCurve} velocityScale={velocityScale} />
           <div className="results-grid" style={{ marginTop: "14px" }}>
             <div className="result-card" data-testid="curve-knee-card">
               <div className="result-label">Seuil de transition</div>
@@ -1102,7 +1177,7 @@ export default function Clapetteries() {
             </div>
           </div>
           <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "8px" }} data-testid="shim-curve-note">
-            Le trace depend maintenant de la sequence du stack, du taper, des epaisseurs, des quantites et des crossover shims. L'echelle verticale reste suffisamment stable pour comparer les reglages entre eux.
+            Le trace depend maintenant de la sequence du stack, du taper, des epaisseurs, des quantites et des crossover shims. Axe vitesse actif : {velocityScale === "linear" ? "linéaire" : "LOG10"}. En mode LOG10, 0 m/s reste ancré à gauche et les vitesses positives sont réparties en base 10.
           </p>
         </div>
 
